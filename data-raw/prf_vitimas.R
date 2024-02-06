@@ -1,165 +1,241 @@
-library(data.table)
 library(lubridate)
+library(dplyr)
+library(arrow)
+library(purrr)
+library(lubridate)
+library(stringr)
 
-file_list <- paste0(
-  "unzip -p data-raw/",
-  list.files("data-raw", pattern = "^acidentes")
-)
-
-victims_list <- lapply(file_list, fread, encoding = "Latin-1")
-
-fix_date <- function(victims) {
-  if (!is.Date(victims$data_inversa)) {
-    victims[, data_inversa := dmy(data_inversa)]
+unzip_acidentes <- function(pattern) {
+  if (file.exists("data-raw/acidentes2007.csv")) {
+    stop("Files already unzipped")
   } else {
-    victims[, data_inversa := ymd(data_inversa)]
+    message("Unzipping files")
+    file_list <- list.files("data-raw", pattern = pattern)
+    for (file in file_list) {
+      unzip(paste0("data-raw/", file), exdir = "data-raw/", overwrite = TRUE)
+    }
   }
 }
 
-lapply(victims_list, fix_date)
+read_arrow_vitimas_2015 <- function(pattern) {
+  file_list <- list.files("data-raw", pattern = pattern, full.names = TRUE)
+  list2015 <- file_list[1:9]
+  arrow_list <- lapply(
+    list2015, 
+    read_csv_arrow, 
+    col_types = schema(
+      id = utf8(),
+      pesid = utf8(),
+      data_inversa = utf8(),
+      dia_semana = utf8(),
+      uf = utf8(),
+      horario = utf8(),
+      br = utf8(),
+      km = utf8(),
+      municipio = utf8(),
+      causa_acidente = utf8(),
+      tipo_acidente = utf8(),
+      classificacao_acidente = utf8(),
+      condicao_metereologica = utf8(),
+      tipo_pista = utf8(),
+      tracado_via = utf8(),
+      uso_solo = utf8(),
+      id_veiculo = utf8(),
+      tipo_veiculo = utf8(),
+      marca = utf8(),
+      ano_fabricacao_veiculo = utf8(),
+      tipo_envolvido = utf8(),
+      estado_fisico = utf8(),
+      idade = utf8(),
+      sexo = utf8(),
+      nacionalidade = utf8(),
+      naturalidade = utf8(),
+      fase_dia = utf8(),
+      sentido_via = utf8(),
+      ilesos  = int32(),
+      feridos_leves = int32(),
+      feridos_graves = int32(),
+      mortos = int32(),
+      latitude = utf8(),
+      longitude = utf8(),
+      regional = utf8(),
+      delegacia = utf8(),
+      uop = utf8()
+    ),
+    read_options = csv_read_options(encoding = "latin1")
+  )
+  arrow_list |> reduce(bind_rows)
+}
 
-prf_victims <- rbindlist(victims_list, fill = TRUE)
+read_arrow_vitimas_2016 <- function(pattern) {
+  file_list <- list.files("data-raw", pattern = pattern, full.names = TRUE)
+  list2016 <- file_list[10:17]
+  arrow_list <- lapply(
+    list2016, 
+    read_csv2_arrow, 
+    col_types = schema(
+      id = utf8(),
+      pesid = utf8(),
+      data_inversa = utf8(),
+      dia_semana = utf8(),
+      uf = utf8(),
+      horario = utf8(),
+      br = utf8(),
+      km = utf8(),
+      municipio = utf8(),
+      causa_acidente = utf8(),
+      tipo_acidente = utf8(),
+      classificacao_acidente = utf8(),
+      condicao_metereologica = utf8(),
+      tipo_pista = utf8(),
+      tracado_via = utf8(),
+      uso_solo = utf8(),
+      id_veiculo = utf8(),
+      tipo_veiculo = utf8(),
+      marca = utf8(),
+      ano_fabricacao_veiculo = utf8(),
+      tipo_envolvido = utf8(),
+      estado_fisico = utf8(),
+      idade = utf8(),
+      sexo = utf8(),
+      nacionalidade = utf8(),
+      naturalidade = utf8(),
+      fase_dia = utf8(),
+      sentido_via = utf8(),
+      ilesos  = int32(),
+      feridos_leves = int32(),
+      feridos_graves = int32(),
+      mortos = int32(),
+      latitude = utf8(),
+      longitude = utf8(),
+      regional = utf8(),
+      delegacia = utf8(),
+      uop = utf8()
+    ),
+    read_options = csv_read_options(encoding = "latin1")
+  )
+  arrow_list |> reduce(bind_rows)
+}
 
-prf_victims[, id := as.character(id)]
+unzip_acidentes("^acidentes.*.zip")
 
-prf_victims[, pesid := as.character(pesid)]
+vitimas_2015 <- read_arrow_vitimas_2015("^acidentes.*.csv")
 
-prf_victims[, dia_semana := wday(
-  data_inversa,
-  locale = "pt_BR.UTF-8",
-  label = TRUE,
-  abbr = FALSE
-)]
+vitimas_2016 <- read_arrow_vitimas_2016("^acidentes.*.csv")
 
-prf_victims[uf == "(null)", uf := NA]
+vitimas <- bind_rows(vitimas_2015, vitimas_2016) |> 
+  as_arrow_table()
 
-prf_victims[br == "(null)", br := NA]
+prf_vitimas <- vitimas |> 
+  mutate(
+    data_inversa = case_when(
+      str_ends(data_inversa, "2007|2008|2009|2010|2011|2012|2013|2014|2015|/16") ~ dmy(data_inversa),
+      TRUE ~ ymd(data_inversa)
+    ),
+    dia_semana = wday(
+      data_inversa,
+      locale = "pt_BR.UTF-8",
+      label = TRUE,
+      abbr = FALSE
+    ),
+    uf = case_when(
+      uf == "(null)" ~ NA_character_,
+      TRUE ~ uf
+    ),
+    br = case_when(
+      br == "(null)" ~ NA_character_,
+      TRUE ~ br
+    ),
+    km = sub("\\.", ",", km),
+    municipio = case_when(
+      municipio == "(null)" ~ NA_character_,
+      TRUE ~ municipio
+    ),
+    causa_acidente = case_when(
+      causa_acidente == "(null)" ~ NA_character_,
+      TRUE ~ tolower(causa_acidente)
+    ),
+    tipo_acidente = case_when(
+      tipo_acidente %in% c("", "(null)") ~ NA_character_,
+      TRUE ~ tolower(tipo_acidente)
+    ),
+    classificacao_acidente = case_when(
+      classificacao_acidente %in% c("", "(null)") ~ NA_character_,
+      TRUE ~ sub("\\s+$", "", classificacao_acidente)
+    ),
+    fase_dia = tolower(fase_dia),
+    fase_dia = case_when(
+      fase_dia %in% c("", "(null)") ~ NA_character_,
+      TRUE ~ fase_dia
+    ),
+    condicao_metereologica = tolower(condicao_metereologica),
+    condicao_metereologica = case_when(
+      condicao_metereologica %in% c("", "(null)") ~ NA_character_,
+      condicao_metereologica == "ignorado" ~ "ignorada",
+      TRUE ~ condicao_metereologica
+    ),
+    sentido_via = sub("\\s+$", "", sentido_via),
+    tipo_pista = sub("\\s+$", "", tipo_pista),
+    tipo_pista = case_when(
+      tipo_pista == "(null)" ~ NA_character_,
+      TRUE ~ tipo_pista
+    ),
+    tracado_via = sub("\\s+$", "", tracado_via),
+    tracado_via = case_when(
+      tracado_via == "(null)" ~ NA_character_,
+      TRUE ~ tracado_via
+    ),
+    uso_solo = sub("\\s+$", "", uso_solo),
+    uso_solo = case_when(
+      uso_solo == "Sim" ~ "Urbano",
+      uso_solo == "Não" ~ "Rural",
+      uso_solo == "(null)" ~ NA_character_,
+      TRUE ~ uso_solo
+    ),
+    id_veiculo = case_when(
+      id_veiculo == "(null)" ~ NA_character_,
+      TRUE ~ id_veiculo
+    ),
+    tipo_veiculo = tolower(tipo_veiculo),
+    tipo_veiculo = case_when(
+      tipo_veiculo %in% c("", "(null)", "não identificado", "não informado") ~ NA_character_,
+      tipo_veiculo == "carro-de-mao" ~ "carro de mão",
+      tipo_veiculo == "micro-ônibus" ~ "microônibus",
+      tipo_veiculo == "motocicletas" ~ "motocicleta",
+      tipo_veiculo %in% c("semi-reboque", "semireboque") ~ "semirreboque",
+      tipo_veiculo == "trator de esteiras" ~ "trator de esteira",
+      tipo_veiculo == "bonde / trem" ~ "trem-bonde",
+      TRUE ~ tipo_veiculo
+    ),
+    marca = sub("\\s+$", "", marca),
+    # ano_fabricacao_veiculo = as.numeric(ano_fabricacao_veiculo),
+    # ano_fabricacao_veiculo = case_when(
+    #   ano_fabricacao_veiculo > 2023 ~ NA_real_,
+    #   TRUE ~ ano_fabricacao_veiculo
+    # ),
+    estado_fisico = sub("\\s+$", "", estado_fisico),
+    estado_fisico = case_when(
+      estado_fisico %in% c("", "(null)", "Ignorado", "Não Informado") ~ NA_character_,
+      estado_fisico == "Lesões Graves" ~ "Ferido Grave",
+      estado_fisico == "Lesões Leves" ~ "Ferido Leve",
+      estado_fisico == "Morto" ~ "Óbito",
+      TRUE ~ estado_fisico
+    ),
+    sexo = case_when(
+      sexo %in% c("", "I", "Ignorado", "Inválido", "Não Informado") ~ NA_character_,
+      sexo == "F" ~ "Feminino",
+      sexo == "M" ~ "Masculino",
+      TRUE ~ sexo
+    ),
+    nacionalidade = tolower(nacionalidade),
+    naturalidade = tolower(naturalidade),
+    ano = year(data_inversa)
+  ) |> 
+  select(
+    -ilesos, -feridos_leves, -feridos_graves, -mortos,
+    -latitude, -longitude, -regional, -delegacia, -uop
+  )
 
-prf_victims[km == "(null)", km := NA]
-
-prf_victims[, km := sub("\\.", ",", km)]
-
-prf_victims[municipio == "(null)", municipio := NA]
-
-prf_victims[causa_acidente == "(null)", causa_acidente := NA]
-
-prf_victims[, causa_acidente := tolower(causa_acidente)]
-
-prf_victims[tipo_acidente %in% c("", "(null)"), tipo_acidente := NA]
-
-prf_victims[, tipo_acidente := tolower(tipo_acidente)]
-
-prf_victims[
-  classificacao_acidente %in% c("", "(null)"),
-  classificacao_acidente := NA
-]
-
-prf_victims[
-  ,
-  classificacao_acidente := sub("\\s+$", "", classificacao_acidente)
-]
-
-prf_victims[fase_dia %in% c("", "(null)"), fase_dia := NA]
-
-prf_victims[, sentido_via := sub("\\s+$", "", sentido_via)]
-
-prf_victims[
-  condicao_metereologica %in% c("", "(null)"),
-  condicao_metereologica := NA
-]
-
-prf_victims[, condicao_metereologica := tolower(condicao_metereologica)]
-
-prf_victims[
-  condicao_metereologica == "ignorado",
-  condicao_metereologica := "ignorada"
-]
-
-prf_victims[, tipo_pista := sub("\\s+$", "", tipo_pista)]
-
-prf_victims[tipo_pista == "(null)", tipo_pista := NA]
-
-prf_victims[tracado_via == "(null)", tracado_via := NA]
-
-prf_victims[, tracado_via := sub("\\s+$", "", tracado_via)]
-
-prf_victims[, uso_solo := sub("\\s+$", "", uso_solo)]
-
-prf_victims[uso_solo == "Sim", uso_solo := "Urbano"]
-
-prf_victims[uso_solo == "Não", uso_solo := "Rural"]
-
-prf_victims[uso_solo == "(null)", uso_solo := NA]
-
-prf_victims[id_veiculo == "(null)", id_veiculo := NA]
-
-prf_victims[, tipo_veiculo := tolower(tipo_veiculo)]
-
-prf_victims[tipo_veiculo == "carro-de-mao", tipo_veiculo := "carro de mão"]
-
-prf_victims[tipo_veiculo == "micro-ônibus", tipo_veiculo := "microônibus"]
-
-prf_victims[tipo_veiculo == "motocicletas", tipo_veiculo := "motocicleta"]
-
-prf_victims[
-  tipo_veiculo %in% c("semi-reboque", "semireboque"),
-  tipo_veiculo := "semirreboque"
-]
-
-prf_victims[
-  tipo_veiculo == "trator de esteiras",
-  tipo_veiculo := "trator de esteira"
-]
-
-prf_victims[
-  tipo_veiculo %in% c("", "(null)", "não identificado", "não informado"),
-  tipo_veiculo := NA
-]
-
-prf_victims[tipo_veiculo == "bonde / trem", tipo_veiculo := "trem-bonde"]
-
-prf_victims[, marca := sub("\\s+$", "", marca)]
-
-prf_victims[, ano_fabricacao_veiculo := as.numeric(ano_fabricacao_veiculo)]
-
-prf_victims[ano_fabricacao_veiculo > 2023, ano_fabricacao_veiculo := NA]
-
-prf_victims[, estado_fisico := sub("\\s+$", "", estado_fisico)]
-
-prf_victims[
-  estado_fisico %in% c("", "(null)", "Ignorado", "Não Informado"),
-  estado_fisico := NA
-]
-
-prf_victims[estado_fisico == "Lesões Graves", estado_fisico := "Ferido Grave"]
-
-prf_victims[estado_fisico == "Lesões Leves", estado_fisico := "Ferido Leve"]
-
-prf_victims[estado_fisico == "Morto", estado_fisico := "Óbito"]
-
-prf_victims[
-  sexo %in% c("", "I", "Ignorado", "Inválido", "Não Informado"),
-  sexo := NA
-]
-
-prf_victims[sexo == "F", sexo := "Feminino"]
-
-prf_victims[sexo == "M", sexo := "Masculino"]
-
-prf_victims[, nacionalidade := tolower(nacionalidade)]
-
-prf_victims[, naturalidade := tolower(naturalidade)]
-
-prf_victims[, ilesos := NULL]
-prf_victims[, feridos_leves := NULL]
-prf_victims[, feridos_graves := NULL]
-prf_victims[, mortos := NULL]
-prf_victims[, latitude := NULL]
-prf_victims[, longitude := NULL]
-prf_victims[, regional := NULL]
-prf_victims[, delegacia := NULL]
-prf_victims[, uop := NULL]
-
-prf_vitimas <- prf_victims
-
-write_parquet(prf_vitimas, "data/prf_vitimas.parquet")
+prf_vitimas |> 
+  group_by(ano) |> 
+  write_dataset("data/prf_vitimas")
