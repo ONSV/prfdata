@@ -1,90 +1,149 @@
-library(data.table)
 library(lubridate)
-library(magrittr)
-library(duckdb)
+library(dplyr)
 library(arrow)
+library(purrr)
+library(lubridate)
+library(stringr)
 
-file_list <- paste0(
-  "unzip -p data-raw/",
-  list.files("data-raw", pattern = "^datatran")
-)
 
-accidents_list <- lapply(file_list, fread, encoding = "Latin-1")
-
-fix_date <- function(accidents) {
-  if (!is.Date(accidents$data_inversa)) {
-    accidents[, data_inversa := dmy(data_inversa)]
+unzip_acidentes <- function(pattern) {
+  if (file.exists("data-raw/datatran2007.csv")) {
+    message("Files already unzipped")
   } else {
-    accidents[, data_inversa := ymd(data_inversa)]
+    message("Unzipping files")
+    file_list <- list.files("data-raw", pattern = pattern)
+    for (file in file_list) {
+      unzip(paste0("data-raw/", file), exdir = "data-raw/", overwrite = TRUE)
+    }
   }
 }
 
-lapply(accidents_list, fix_date)
-
-prf_crashes <- rbindlist(accidents_list, fill = TRUE)
-
-prf_crashes[, id := as.character(id)]
-
-prf_crashes[
-  , 
-  dia_semana := wday(
-    data_inversa,
-    locale = "pt_BR.UTF-8",
-    label = TRUE,
-    abbr = FALSE
+read_arrow_acidentes <- function(pattern) {
+  file_list <- list.files("data-raw", pattern = pattern, full.names = TRUE)
+  arrow_list <- lapply(
+    file_list, 
+    read_csv2_arrow, 
+    col_types = schema(
+      id = utf8(),
+      data_inversa = utf8(),
+      dia_semana = utf8(),
+      uf = utf8(),
+      horario = utf8(),
+      br = utf8(),
+      km = utf8(),
+      municipio = utf8(),
+      causa_acidente = utf8(),
+      tipo_acidente = utf8(),
+      classificacao_acidente = utf8(),
+      fase_dia = utf8(),
+      sentido_via = utf8(),
+      condicao_metereologica = utf8(),
+      tipo_pista = utf8(),
+      tracado_via = utf8(),
+      uso_solo = utf8(),
+      ano = int32(),
+      pessoas = int32(),
+      mortos = int32(),
+      feridos_leves = int32(),
+      feridos_graves = int32(),
+      ilesos = int32(),
+      ignorados = int32(),
+      feridos = int32(),
+      veiculos = int32(),
+      regional = utf8(),
+      delegacia = utf8(),
+      uop = utf8(),
+      latitude = utf8(),
+      longitude = utf8()
+    ),
+    read_options = csv_read_options(encoding = "latin1")
   )
-]
+  arrow_list |> reduce(bind_rows)
+}
 
-prf_crashes[uf == "(null)", uf := NA]
+unzip_acidentes("^datatran.*.zip")
 
-prf_crashes[br == "(null)", br := NA]
+sinistros <- read_arrow_acidentes("^datatran.*.csv") |> 
+  as_arrow_table()
 
-prf_crashes[, causa_acidente := tolower(causa_acidente)]
-prf_crashes[causa_acidente == "(null)", causa_acidente := NA]
+sinistros <- sinistros |> 
+  mutate(
+    data_inversa = case_when(
+      str_ends(data_inversa, "2007|2008|2009|2010|2011|/16") ~ dmy(data_inversa),
+      TRUE ~ ymd(data_inversa)
+    ),
+    dia_semana = wday(
+      data_inversa,
+      locale = "pt_BR.UTF-8",
+      label = TRUE,
+      abbr = FALSE
+    ),
+    uf = case_when(
+      uf == "(null)" ~ NA_character_,
+      TRUE ~ uf
+    ),
+    br = case_when(
+      br == "(null)" ~ NA_character_,
+      TRUE ~ br
+    ),
+    causa_acidente = tolower(causa_acidente),
+    causa_acidente = case_when(
+      causa_acidente == "(null)" ~ NA_character_,
+      TRUE ~ causa_acidente
+    ),
+    tipo_acidente = case_when(
+      tipo_acidente == "" ~ NA_character_,
+      TRUE ~ tipo_acidente
+    ),
+    classificacao_acidente = case_when(
+      classificacao_acidente == "" ~ NA_character_,
+      classificacao_acidente == "(null)" ~ NA_character_,
+      TRUE ~ classificacao_acidente
+    ),
+    fase_dia = tolower(fase_dia),
+    fase_dia = case_when(
+      fase_dia == "" ~ NA_character_,
+      fase_dia == "(null)" ~ NA_character_,
+      TRUE ~ fase_dia
+    ),
+    condicao_metereologica = tolower(condicao_metereologica),
+    condicao_metereologica = case_when(
+      condicao_metereologica == "" ~ NA_character_,
+      condicao_metereologica == "(null)" ~ NA_character_,
+      condicao_metereologica == "ignorado" ~ "ignorada",
+      condicao_metereologica == "céu claro" ~ "ceu claro",
+      TRUE ~ condicao_metereologica
+    ),
+    tipo_pista = case_when(
+      tipo_pista == "(null)" ~ NA_character_,
+      TRUE ~ tipo_pista
+    ),
+    tracado_via = case_when(
+      tracado_via == "(null)" ~ NA_character_,
+      tracado_via == "Não Informado" ~ NA_character_,
+      TRUE ~ tracado_via
+    ),
+    uso_solo = case_when(
+      uso_solo == "(null)" ~ NA_character_,
+      uso_solo == "Sim" ~ "Urbano",
+      uso_solo == "Não" ~ "Rural",
+      TRUE ~ uso_solo
+    ),
+    ano = year(data_inversa),
+    regional = case_when(
+      regional == "(N/A)" ~ NA_character_,
+      TRUE ~ regional
+    ),
+    delegacia = case_when(
+      delegacia == "(N/A)" ~ NA_character_,
+      TRUE ~ delegacia
+    ),
+    uop = case_when(
+      uop == "(N/A)" ~ NA_character_,
+      TRUE ~ uop
+    )
+  )
 
-prf_crashes[tipo_acidente == "", tipo_acidente := NA]
-
-prf_crashes[
-  classificacao_acidente %in% c("", "(null)"),
-  classificacao_acidente := NA
-]
-
-prf_crashes[fase_dia %in% c("", "(null)"), fase_dia := NA][
-  , fase_dia := tolower(fase_dia)]
-
-prf_crashes %>% 
-  .[
-    condicao_metereologica %in% c("", "(null)"),
-    condicao_metereologica := NA
-  ] %>% 
-  .[, condicao_metereologica := tolower(condicao_metereologica)] %>% 
-  .[
-    condicao_metereologica == "ignorado",
-    condicao_metereologica := "ignorada"
-  ] %>% 
-  .[
-    condicao_metereologica == "céu claro",
-    condicao_metereologica := "ceu claro"
-  ]
-
-prf_crashes[tipo_pista == "(null)", tipo_pista := NA]
-
-prf_crashes[tracado_via %in% c("(null)", "Não Informado"), tracado_via := NA]
-
-prf_crashes[uso_solo == "(null)", uso_solo := NA]
-
-prf_crashes[uso_solo == "Sim", uso_solo := "Urbano"]
-
-prf_crashes[uso_solo == "Não", uso_solo := "Rural"]
-
-prf_crashes[, ano := year(data_inversa)]
-
-prf_crashes[regional == "N/A", regional := NA]
-
-prf_crashes[delegacia == "N/A", delegacia := NA]
-
-prf_crashes[uop == "N/A", uop := NA]
-
-prf_sinistros <- prf_crashes
-
-write_parquet(prf_sinistros, "data/prf_sinistros.parquet")
+sinistros |> 
+  group_by(ano) |>
+  write_dataset("data/prf_sinistros")
