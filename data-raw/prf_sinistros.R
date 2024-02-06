@@ -5,7 +5,6 @@ library(purrr)
 library(lubridate)
 library(stringr)
 
-
 unzip_acidentes <- function(pattern) {
   if (file.exists("data-raw/datatran2007.csv")) {
     message("Files already unzipped")
