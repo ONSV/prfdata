@@ -52,6 +52,7 @@ rsconnect/
 data-raw/*.csv
 
 data/*.parquet
+data/*.zip
 
 # MacOS
 .DS_Store
