@@ -7,7 +7,7 @@ library(stringr)
 
 unzip_acidentes <- function(pattern) {
   if (file.exists("data-raw/acidentes2007.csv")) {
-    stop("Files already unzipped")
+    message("Files already unzipped")
   } else {
     message("Unzipping files")
     file_list <- list.files("data-raw", pattern = pattern)
@@ -236,6 +236,5 @@ prf_vitimas <- vitimas |>
     -latitude, -longitude, -regional, -delegacia, -uop
   )
 
-prf_vitimas |> 
-  group_by(ano) |> 
-  write_dataset("data/prf_vitimas")
+write_parquet(vitimas, "data/prf_vitimas.parquet")
+zip("data/prf_vitimas.zip", "data/prf_vitimas.parquet")

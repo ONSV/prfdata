@@ -143,6 +143,5 @@ sinistros <- sinistros |>
     )
   )
 
-sinistros |> 
-  group_by(ano) |>
-  write_dataset("data/prf_sinistros")
+write_parquet(sinistros, "data/prf_sinistros.parquet")
+zip("data/prf_sinistros.zip", "data/prf_sinistros.parquet")
