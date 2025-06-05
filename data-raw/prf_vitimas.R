@@ -69,7 +69,7 @@ read_arrow_vitimas_2015 <- function(pattern) {
 
 read_arrow_vitimas_2016 <- function(pattern) {
   file_list <- list.files("data-raw", pattern = pattern, full.names = TRUE)
-  list2016 <- file_list[10:17]
+  list2016 <- file_list[10:19]
   arrow_list <- lapply(
     list2016, 
     read_csv2_arrow, 
@@ -127,11 +127,16 @@ vitimas <- bind_rows(vitimas_2015, vitimas_2016) |>
   as_arrow_table()
 
 prf_vitimas <- vitimas |> 
+  collect() |> 
   mutate(
-    data_inversa = case_when(
-      str_ends(data_inversa, "2007|2008|2009|2010|2011|2012|2013|2014|2015|/16") ~ dmy(data_inversa),
-      TRUE ~ ymd(data_inversa)
-    ),
+    ano_2digs = str_detect(data_inversa, "^\\d{2}/\\d{2}/\\d{2}$"),
+    data_inversa = as.Date(parse_date_time(
+      data_inversa,
+      orders = c("dmy", "ymd", "Ymd"),
+      locale = "pt_BR.UTF-8"
+    ))
+  ) |> 
+  mutate(
     dia_semana = wday(
       data_inversa,
       locale = "pt_BR.UTF-8",
@@ -228,13 +233,15 @@ prf_vitimas <- vitimas |>
       TRUE ~ sexo
     ),
     nacionalidade = tolower(nacionalidade),
-    naturalidade = tolower(naturalidade),
-    ano = year(data_inversa)
+    naturalidade = tolower(naturalidade)
   ) |> 
   select(
     -ilesos, -feridos_leves, -feridos_graves, -mortos,
-    -latitude, -longitude, -regional, -delegacia, -uop
+    -latitude, -longitude, -regional, -delegacia, -uop,
+    -ano_2digs
   )
+
+
 
 write_parquet(vitimas, "data/prf_vitimas.parquet")
 zip("data/prf_vitimas.zip", "data/prf_vitimas.parquet")
